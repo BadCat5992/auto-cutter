@@ -69,18 +69,24 @@ def transcribe_audio(video_path):
         if os.path.exists(audio_path):
             os.remove(audio_path)
 
-def extract_cut_ranges(text):
+def extract_cut_ranges(text, user_prompt=None):
     print("🤖 Frage LLM nach Schnittstellen...")
+
+    extra_prompt = f"\nBerücksichtige dabei folgende Anweisung:\n{user_prompt}" if user_prompt else ""
 
     prompt = f"""
 Gib mir die spannendsten Ausschnitte in diesem JSON-Format zurück:
-{{"cuts": [[start1, end1], [start2, end2], ...]}}
+{{"cuts": [['start1', 'end1'], ['start2', 'end2'], ...]}}
+
+z.b. {{"cuts": [['1', '10'], ['30', '50'], ...]}}
 Mache bitte so viele cuts wie möglich!
 Nur den JSON bitte, kein anderes Gerede!
+{extra_prompt}
 
 Transkript:
 {text}
 """
+
     response = ollama.chat(model=OLLAMA_MODEL, messages=[
         {"role": "system", "content": "/set format json"},
         {"role": "user", "content": prompt}
@@ -123,7 +129,6 @@ def concat_clips_ffmpeg(clip_paths, output_path, temp_dir="temp_clips"):
     list_file = os.path.join(temp_dir, "clips.txt")
     with open(list_file, "w") as f:
         for clip in clip_paths:
-            # Nur Dateiname, weil wir cwd setzen
             f.write(f"file '{os.path.basename(clip)}'\n")
     cmd = [
         "ffmpeg", "-y", "-f", "concat", "-safe", "0",
@@ -142,6 +147,9 @@ def cut_video(video_path, ranges, output_path):
 def run_pipeline_with_gui(filepath):
     with pipeline_lock:
         try:
+            label.config(text="🧠 Beende alte Ollama-Prozesse...")
+            kill_ollama_model_processes(OLLAMA_MODEL)  # 🆕 Direkt am Anfang killen
+
             label.config(text="🧠 Prüfe Ollama Erreichbarkeit...")
             if not check_ollama_available():
                 label.config(text="❌ Ollama läuft nicht! Bitte installiere es oder prüfe die Verbindung.")
@@ -150,13 +158,15 @@ def run_pipeline_with_gui(filepath):
             if not is_ollama_model_running():
                 print("🚀 Starte Ollama-Modell...")
                 subprocess.Popen(["ollama", "run", OLLAMA_MODEL])
-                time.sleep(8)  # 🕐 Warte bis Modell geladen ist
+                time.sleep(8)
 
             label.config(text="🎙️ Transkribiere...")
             transcript = transcribe_audio(filepath)
 
+            user_prompt = prompt_entry.get()
+
             label.config(text="🧠 Finde Highlights...")
-            ranges = extract_cut_ranges(transcript)
+            ranges = extract_cut_ranges(transcript, user_prompt=user_prompt)
 
             if not ranges:
                 label.config(text="❌ Keine Highlights erkannt.")
@@ -186,7 +196,13 @@ root.title("🎮 AutoCut by Julius")
 root.geometry("420x180")
 label = tk.Label(root, text="Wähle dein Gaming-Video für automatische Highlights!", pady=20, wraplength=400)
 label.pack()
+prompt_label = tk.Label(root, text="📝 Optionaler Custom-Prompt:")
+prompt_label.pack()
+
+prompt_entry = tk.Entry(root, width=50)
+prompt_entry.insert(0, "Cutte alle peinlichen Sachen raus")
+prompt_entry.pack(pady=5)
+
 button = tk.Button(root, text="📂 Video auswählen", command=select_file, height=2, width=30)
 button.pack()
 root.mainloop()
-
